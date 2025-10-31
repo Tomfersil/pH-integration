@@ -13,7 +13,57 @@ import jax
 import jax.numpy as np
 from scipy.optimize import minimize
 
+from bussilab import coretools
 from MDRefine import compute_new_weights
+
+class Ph_data(coretools.Result):
+    def __init__(self, g_exp : np.ndarray, sigma_exp : np.ndarray, legend_matrix : np.ndarray,
+                 gs : dict, weights : dict, legend_weights : dict, ref_ph : float, pi0 : np.ndarray,
+                 log_fugacities : np.ndarray, ns_prot : np.ndarray, obs_names : list):
+        """ Class with the fixed quantities that are required to evaluate the loss function `ph_loss`. """
+        
+        super().__init__()
+
+        self.g_exp = g_exp
+        """ 1-D array-like with experimental values """
+
+        self.sigma_exp = sigma_exp
+        """ 1-D array-like with experimental uncertainties """
+
+        self.legend_matrix = legend_matrix
+        """ `legend_matrix` returned by `Manage_indices`, needed to correctly map 1-D arrays `g_exp` and
+        `sigma_exp` to corresponding observable and pH value """
+        
+        self.gs = gs
+        """ Dict of 2-D array-like; each item correspond to a protonation state and its value is
+        the 2-D array (M x N) of observables computed from MD simulations, with M the total n. of frames
+        at given protonation state from all the simulations at constant pH and N the n. of observables """
+
+        self.p0s = weights
+        """ Dict of 1-D array-like with the reference normalized weights for each protonation state,
+        given by the collection of all the sampled configurations at that protonation state from the
+        simulations at constant pH """
+
+        self.legend_weights = legend_weights
+        """ Dict with lists of indices to map back the NumPy arrays with weights and observables from a unique
+        array at fixed protonation state to the contributions from multiple constant-pH simulations """
+
+        self.ref_ph = ref_ph
+        """ Reference value for the pH among the possible ones """
+
+        self.pi0 = pi0
+        """ 1-D array-like with the original (namely, initial hypothesis) probabilities to be at the
+        j-th protonation state for the reference pH value """
+
+        self.log_fugacities = log_fugacities
+        """ 1-D array-like with the logarithm of the fugacity factors, namely the values of
+        $\beta \Delta \mu_i$ (length given by the n. of pH values) """
+
+        self.ns_prot = ns_prot
+        """ 1-D array-like with the numbers of protonation (length given by the n. of protonation states) """
+        
+        self.obs_names = obs_names
+        """ List with the names of the observables (length given by the total n. of observables) """
 
 class Manage_indices():
     """
