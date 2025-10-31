@@ -210,6 +210,9 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
     ref_ph : float
         Float for the reference value of pH, used for reference populations in protonation states and fugacities
         (`pi0` and `log_fugacities` attributes of `Ph_data`).
+        Suggestion: take the pH value to be the closest one to the pKa, namely, take the one such that the
+        populations of protonated/deprotonated states are as similar as possible (avoid that one is much less
+        than the other).
 
     g_exp, sigma_exp : numpy.ndarray
         Numpy 2-dimensional arrays with measured values and corresponding uncertainties; they are structured
