@@ -9,8 +9,9 @@ the grand canonical statistics.
 """
 
 import numpy as numpy
+import pandas
 import jax
-import jax.numpy as np
+import jax.numpy as np  # consistently with MDRefine, np for jax.numpy
 from scipy.optimize import minimize
 
 from bussilab import coretools
@@ -182,6 +183,131 @@ class Manage_indices():
         mat = mat.at[whs[:, 0], whs[:, 1]].set(vals)
 
         return mat
+
+def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi', 'eRMSD'],
+                 ph_vals = [3.50, 4.00, 4.50], ref_ph = 4.5, g_exp = None, sigma_exp = None):
+    """
+    Load pH data from multiple simulations at constant pH.
+
+    Parameters:
+    ----------
+    
+    path : str
+        String with the name of the folder containing the directory `mol_name` with the data from
+        constant-pH simulations.
+    
+    mol_name : str
+        String with the name of the molecular system, corresponding to the name of the directory in `path`.
+    
+    obs_names : list
+        List of strings with the names of the observables, corresponding to the selected columns of the txt files
+        with observables and weights.
+    
+    ph_vals : list
+        List of float values corresponding to the pH values (they should also match with the values required
+        for the names of the data files).
+    
+    ref_ph : float
+        Float for the reference value of pH, used for reference populations in protonation states and fugacities
+        (`pi0` and `log_fugacities` attributes of `Ph_data`).
+
+    g_exp, sigma_exp : numpy.ndarray
+        Numpy 2-dimensional arrays with measured values and corresponding uncertainties; they are structured
+        as a table with rows corresponding to the observables and columns corresponding to the pH values, as
+        listed in `obs_names` and `ph_vals`.
+        If None, it will return the average values and standard deviations on the mean.
+    
+    Return
+    ----------
+
+    ph_data : Ph_data
+        Instance of the `Ph_data` class.
+    """
+
+    assert ref_ph in ph_vals, 'ref_ph not valid'
+
+    # 1. read files and get ns, gs, weights, and ns_prot
+
+    path = path + '/' + mol_name + '/'
+
+    ns = {}
+    gs = {}
+    weights = {}
+
+    for ph in ph_vals:
+        # ns[ph] = np.array(pandas.read_csv(path + 'A5mer_pH0%.2f.occ' % ph, header=None).iloc[:, 0])
+        ns[ph] = numpy.loadtxt(path + mol_name + '_pH0%.2f.occ' % ph)
+
+        # df = pandas.read_csv(path + 'COLVAR_REWEIGHT_0%.2f' % ph, header=3, sep=' ').iloc[:, :4]
+        # df.columns = list(pandas.read_csv(path + 'COLVAR_REWEIGHT_0%.2f' % ph, nrows=0, sep=' '))[2:]
+        df = pandas.read_csv(path + 'COLVAR_REWEIGHT_0%.2f_weighted' % ph, header=0, sep=' ', comment='#')  # [1:]  # .iloc[:, :1]
+
+        gs[ph] = df[obs_names]
+        weights[ph] = np.array(df['weight'])
+
+    ns_prot = numpy.sort(numpy.unique([ns[ph] for ph in ph_vals]))
+    ns_prot = ns_prot.astype(int)
+
+    # 2. put together values from different pH at the same protonation state
+
+    my_gs = {}
+    my_ws = {}
+    my_legend = {}
+
+    for n_prot in ns_prot:
+        # n_prot = int(n_prot)
+        my_gs[n_prot] = []
+        my_ws[n_prot] = []
+        my_legend[n_prot] = [0]
+
+        for ph in ph_vals:
+            # my_gs[n_prot].append(np.array(gs[ph].iloc[ns[ph] == n_prot].loc[0][obs_names]))
+            # my_gs[n_prot].append(gs[ph][ns[ph].to_numpy() == n_prot])
+            my_gs[n_prot].append(np.array(gs[ph])[ns[ph] == n_prot])
+            my_ws[n_prot].append(weights[ph][ns[ph] == n_prot])
+            my_legend[n_prot].append(len(my_ws[n_prot][-1]))
+        
+        my_gs[n_prot] = np.vstack(my_gs[n_prot])
+        my_ws[n_prot] = np.hstack(my_ws[n_prot])
+        my_ws[n_prot] /= np.sum(my_ws[n_prot])
+        my_legend[n_prot] = numpy.cumsum(my_legend[n_prot])
+
+    # 3. given a ref. value for the pH, compute reference populations and log_fugacities
+
+    pop = []
+
+    for n_prot in ns_prot:
+        pop.append(np.sum(weights[ref_ph][ns[ref_ph] == n_prot]))
+
+    pop = np.array(pop)/np.sum(weights[ref_ph])
+
+    delta_ph = np.array(ph_vals) - ref_ph
+    log_fugacities = - delta_ph*np.log(10)
+    
+    # 4. from tables of experimental values and uncertainties, make a 1d array
+    # if tables are absent, use average values and standard deviations on the mean
+
+    if g_exp is None:
+
+        table_av = numpy.zeros((len(obs_names), len(ph_vals)))
+        table_std = + table_av
+
+        for i, obs_name in enumerate(obs_names):
+            for j, ph in enumerate(ph_vals):
+                # first index observable, second index ph
+                if obs_name in gs[ph].columns:
+                    table_av[i, j] = np.mean(np.array(gs[ph][obs_name]))
+                    table_std[i, j] = np.std(np.array(gs[ph][obs_name]))/np.sqrt(len(gs[ph][obs_name]))
+
+        g_exp = table_av
+        sigma_exp = table_std
+
+    legend_matrix = Manage_indices.build_legend(g_exp)[0]
+    g_exp = Manage_indices.flatten(g_exp)
+    sigma_exp = Manage_indices.flatten(sigma_exp)
+
+    return Ph_data(g_exp, sigma_exp, legend_matrix, my_gs, my_ws, my_legend, ref_ph, pop, log_fugacities,
+                   ns_prot, obs_names)
 
 def ph_gamma(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights):
     """
