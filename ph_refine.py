@@ -20,7 +20,7 @@ from MDRefine import compute_new_weights
 class Ph_data(coretools.Result):
     def __init__(self, g_exp : np.ndarray, sigma_exp : np.ndarray, legend_matrix : np.ndarray,
                  gs : dict, weights : dict, legend_weights : dict, ref_ph : float, pi0 : np.ndarray,
-                 log_fugacities : np.ndarray, ns_prot : np.ndarray, obs_names : list):
+                 log_fugacities : np.ndarray, ns_prot : np.ndarray, obs_names : list, ph_vals : list):
         """ Class with the fixed quantities that are required to evaluate the loss function `ph_loss`. """
         
         super().__init__()
@@ -65,6 +65,9 @@ class Ph_data(coretools.Result):
         
         self.obs_names = obs_names
         """ List with the names of the observables (length given by the total n. of observables) """
+
+        self.ph_vals = ph_vals
+        """ List with the pH values (redundant since it can be got from `log_fugacities` and `ref_ph`) """
 
 class Manage_indices():
     """
@@ -310,7 +313,7 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
     sigma_exp = Manage_indices.flatten(sigma_exp)
 
     return Ph_data(g_exp, sigma_exp, legend_matrix, my_gs, my_ws, my_legend, ref_ph, pop, log_fugacities,
-                   ns_prot, obs_names)
+                   ns_prot, obs_names, ph_vals)
 
 def ph_gamma(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights):
     """
