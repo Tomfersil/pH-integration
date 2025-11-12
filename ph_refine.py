@@ -630,12 +630,12 @@ def ph_gamma_and_grad(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph
     grad = ph_gamma_gradient_fun(*args)
     return gamma, grad
 
-def ph_loss(log_pi_vec, lambdas, is_lambdas_fixed, alpha_pi, alphas, ph_data):
+def ph_loss(log_pi_vec, ph_data, lambdas = None, is_lambdas_fixed = False, alpha_pi = 1., alphas = 1.):
     """
-    This is the loss function $\tilde{\mathcal L}(\log\pi_j)$ depending on `log_pi_vec`.
+    This is the loss function L̃(log(pi_j)) depending on `log_pi_vec`.
 
     It does not depend on `lambdas` in the sense that:
-    - if `is_lambdas_fixed` is True, then the optimal lambdas are determined by minimizing the `ph_gamma`
+    - if `is_lambdas_fixed` is False, then the optimal lambdas are determined by minimizing the `ph_gamma`
         function at given `log_pi_vec` with input `lambdas` used only as a starting point for the minimization;
     - else, we suppose the input `lambdas` are already the optimal ones and we just compute corresponding
         `ph_gamma` value; this is useful when we have already minimized over $\lambda$ and we want to compute
@@ -676,6 +676,10 @@ def ph_loss(log_pi_vec, lambdas, is_lambdas_fixed, alpha_pi, alphas, ph_data):
         over $\vec\lambda$.
     """
     
+    if lambdas is None: lambdas = np.zeros(len(ph_data.g_exp))
+    if alphas == 1: alphas = np.ones(len(ph_data.ns_prot))
+    log_pi_ref = np.log(ph_data.pops[ph_data.ref_ph])
+
     log_pi_vec -= np.mean(log_pi_vec)  # enforce zero-mean gauge
     
     # 1. compute ph_weights from pi_vec (ph_weights is a 2d array, `ph_weights[i, j]` is the probability
@@ -683,15 +687,15 @@ def ph_loss(log_pi_vec, lambdas, is_lambdas_fixed, alpha_pi, alphas, ph_data):
     ph_weights = []
 
     for log_fug in ph_data.log_fugacities:
-        weights = compute_ph_weights(log_pi_vec, log_fug, ph_data.n_prot)
+        weights = compute_ph_weights(log_pi_vec, log_fug, ph_data.ns_prot)
         weights /= np.sum(weights)
         ph_weights.append(weights)
     
     ph_weights = np.array(ph_weights)
     
     # 2. minimize Gamma function at given ph_weights (or evaluate Gamma at optimal lambdas)
-    exp_values = np.vstack((ph_data.g_exp, ph_data.sigma_exp))
-    args = (ph_data.legend_matrix, ph_data.gs, exp_values, ph_data.weights_ref, alphas, ph_weights)
+    exp_values = np.vstack((ph_data.g_exp, ph_data.sigma_exp)).T
+    args = (ph_data.legend_matrix, ph_data.gs, exp_values, ph_data.p0s, alphas, ph_weights)
 
     if not is_lambdas_fixed:
         mini = minimize(ph_gamma_and_grad, lambdas, args=args, method='BFGS', jac=True)  # , options={'gtol': gtol})
@@ -703,7 +707,7 @@ def ph_loss(log_pi_vec, lambdas, is_lambdas_fixed, alpha_pi, alphas, ph_data):
     pi_vec = np.exp(log_pi_vec - np.max(log_pi_vec))
     pi_vec /= np.sum(pi_vec)
     
-    dkl = np.sum(np.exp(log_pi_vec)*(log_pi_vec - ph_data.log_pi_ref))
+    dkl = np.sum(np.exp(log_pi_vec)*(log_pi_vec - log_pi_ref))
     loss = - gamma + alpha_pi*dkl
 
     return loss
