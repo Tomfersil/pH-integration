@@ -19,7 +19,7 @@ from MDRefine import compute_new_weights
 
 class Ph_data(coretools.Result):
     def __init__(self, g_exp : np.ndarray, sigma_exp : np.ndarray, legend_matrix : np.ndarray,
-                 gs : dict, weights : dict, legend_weights : dict, ref_ph : float, pi0 : np.ndarray,
+                 gs : dict, weights : dict, legend_weights : dict, ref_ph : float, pops : dict,
                  log_fugacities : np.ndarray, ns_prot : np.ndarray, obs_names : list, ph_vals : list):
         """ Class with the fixed quantities that are required to evaluate the loss function `ph_loss`. """
         
@@ -52,9 +52,10 @@ class Ph_data(coretools.Result):
         self.ref_ph = ref_ph
         """ Reference value for the pH among the possible ones """
 
-        self.pi0 = pi0
-        """ 1-D array-like with the original (namely, initial hypothesis) probabilities to be at the
-        j-th protonation state for the reference pH value """
+        self.pops = pops
+        """ Dict with 1-D array-like with the original (namely, initial hypothesis) probabilities to be at
+        the j-th protonation state for the each pH value. This information is lost when we collect multiple
+        simulations at constant pH values at fixed protonation state. Notice that `pi0` is `pops[ref_ph]`. """
 
         self.log_fugacities = log_fugacities
         """ 1-D array-like with the logarithm of the fugacity factors, namely the values of
@@ -187,6 +188,64 @@ class Manage_indices():
 
         return mat
 
+class Ph_consistency(coretools.Result):
+    def __init__(self, ph_fraction : dict, eff_n_frames : dict, s : list, s_CG : list, s_CG_within : list,
+                 avs : dict, stds : dict, zs : dict, bins : dict, hists : dict, hist_dkls : dict, hist_ress : dict,
+                 pops : dict, pops_dkl : dict):
+        """ Class with the fixed quantities that are required to evaluate the loss function `ph_loss`. """
+    
+        super().__init__()
+
+        self.ph_fraction = ph_fraction
+        """ Dict with the fraction of weighted frames coming from each pH for a given protonation state """
+
+        self.eff_n_frames = eff_n_frames
+        """ Dict with the effective n. of frames for each protonation state and pH value """
+    
+        self.s = s
+        """ List of the entropy for the distribution at each protonation state """
+    
+        self.s_CG = s_CG
+        """ List of the entropy for the clustered / coarse-grained (accordingly to the pH) distribution
+        at each protonation state """
+    
+        self.s_CG_within = s_CG_within
+        """ List of the 1d numpy.ndarray with the entropies of the clusters given by the pH at each
+        protonation state """
+    
+        self.avs = avs
+        """ Dict with the average values of the observables at different pH values and protonation states """
+    
+        self.stds = stds
+        """ Dict with the error on-the-mean values of the observables at different pH values and protonation
+        states; they are computed by dividing the standard deviation by the square root of the effective number
+        of frames """
+    
+        self.zs = zs
+        """ Dict with the z values comparing averages at different pH values """
+    
+        self.bins = bins
+        """ Dict with the bins used for the 1d histograms of the observables (same bin for multiple pH values) """
+    
+        self.hists = hists
+        """ Dict with the 1d histograms of the observables """
+
+        self.hist_dkls = hist_dkls
+        """ Dict with the values of the Kullback-Leibler divergence between 1d histograms of the observables `hists` """
+    
+        self.hist_ress = hist_ress
+        """ Dict with the values of the residues (as defined in `compute_dkl`) between 1d histograms of the
+        observables `hists` """
+    
+        self.pops = pops
+        """ Dict with the populations of multiple protonation states at each pH value beyond the reference one
+        `data.ref_ph`, as computed by `compute_ph_weights` following the grand-canonical statistics (correspondence
+        between pH differences and fugacities) """
+
+        self.pops_dkl = pops_dkl
+        """ Dict with the values of Kullback-Leibler divergence between `pops` and corresponding values
+        resulting from constant-pH MD simulations """
+
 def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi', 'eRMSD'],
                  ph_vals = [3.50, 4.00, 4.50], ref_ph = 4.5, g_exp = None, sigma_exp = None):
     """
@@ -280,12 +339,15 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
 
     # 3. given a ref. value for the pH, compute reference populations and log_fugacities
 
-    pop = []
+    pops = {}
 
-    for n_prot in ns_prot:
-        pop.append(np.sum(weights[ref_ph][ns[ref_ph] == n_prot]))
+    for ph in ph_vals:
+        pops[ph] = []
 
-    pop = np.array(pop)/np.sum(weights[ref_ph])
+        for n_prot in ns_prot:
+            pops[ph].append(np.sum(weights[ph][ns[ph] == n_prot]))
+
+        pops[ph] = np.array(pops[ph])/np.sum(weights[ph])
 
     delta_ph = np.array(ph_vals) - ref_ph
     log_fugacities = - delta_ph*np.log(10)
@@ -312,8 +374,190 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
     g_exp = Manage_indices.flatten(g_exp)
     sigma_exp = Manage_indices.flatten(sigma_exp)
 
-    return Ph_data(g_exp, sigma_exp, legend_matrix, my_gs, my_ws, my_legend, ref_ph, pop, log_fugacities,
+    return Ph_data(g_exp, sigma_exp, legend_matrix, my_gs, my_ws, my_legend, ref_ph, pops, log_fugacities,
                    ns_prot, obs_names, ph_vals)
+
+def entropy_fun(p):
+    p = p[p != 0]
+    entropy = np.sum(p*np.log(p))
+    return entropy
+
+def compute_dkl(p, p0, if_zero = False):
+    """
+    Compute the Kullback-Leibler divergence between `p` and `p0`.
+    If `if_zero` is True, then remove from `p` and `p0` the points with `p0 = 0` so that no `inf` value
+    will be returned. To check that this modification is just due to statistical fluctuation, return also
+    the total removed probability.
+    """
+    
+    p0 = p0[p != 0]
+    p = p[p != 0]
+
+    if if_zero:
+        tot = np.sum(p[p0 == 0])
+        p = p[p0 != 0]
+        p0 = p0[p0 != 0]
+    
+    dkl = np.sum(p*np.log(p/p0))
+    
+    if if_zero: return dkl, tot
+    else: return dkl
+
+def _fun_zeta_val(mu1, mu2, sigma1, sigma2):
+    z = (mu1 - mu2)/np.sqrt(sigma1**2 + sigma2**2)
+    return z
+
+def compute_ph_weights(log_pi, log_fugacity, ns):
+    ph_weights = np.exp(log_pi + log_fugacity*ns)
+    ph_weights /= np.sum(ph_weights)
+    return ph_weights
+
+def compute_ph_consistency(data):
+    """
+    1. Compute total weight of each pH value to each protonation state and the effective number of frames.
+
+    Notice that the contribution of each pH value to each protonation state is not a physical quantity
+    and can be arbitrarily modified (for example, one can count more a given pH value by doing a longer
+    MD simulation). The point is that each pH value at fixed protonation state is a sampling from the
+    canonical ensemble and they should be all consistent with each other.
+
+    Notice also that, when multiple samplings at different pH values corresponding to the same protonation
+    state are merged, the effective number of frames is not the sum of those corrresponding to each sampling.
+    However, the entropy fulfills an equation in the same spirit of the ANOVA for the variances.
+
+    2. Compute the entropy with and without clusters: multiple samplings of the canonical ensemble are put
+    together (from simulations at different pH values) and we compute the entropy of the whole distribution `s`,
+    the entropy of the clustered distribution `s_CG` and the entropies of the distributions inside each cluster
+    `s_CG_within`. A relation similar to ANOVA holds between these values of entropy.
+    
+    3. Compute average values `avs` and standard errors on the mean `stds` (given by the standard deviation
+    divided by the square root of the effective n. of frames), for each protonation state, pH value and
+    observable. Then, compare values for different pH values, are they compatible with each other?
+    This agreement is quantified by the `z` values.
+
+    4. Comparing average values is not enough to claim that there is agreement: let's consider also 1-dimensional
+    histograms `my_bins`, `my_hists` and compute the KL divergence among them `my_dkls`, as indicated in
+    `compute_dkl`, so we also have the "residues" `my_ress`.
+
+    5. Compare the computation of the population of protonation states at multiple pH values with the values
+    from MD simulations.
+    """
+
+    #### part 1
+
+    my_tot = {}
+    split_weights = {}
+    split_gs = {}
+    eff_n_frames = {}
+
+    for n_prot in data.ns_prot:
+
+        my_tot[n_prot] = []
+        split_weights[n_prot] = []
+        split_gs[n_prot] = []
+        eff_n_frames[n_prot] = []
+
+        indices = data.legend_weights[n_prot]
+        
+        for i in range(len(indices) - 1):
+            my_tot[n_prot].append(np.sum(data.p0s[n_prot][indices[i] : indices[i + 1]]))
+            split_weights[n_prot].append(data.p0s[n_prot][indices[i] : indices[i + 1]]/my_tot[n_prot][-1])
+            split_gs[n_prot].append(data.gs[n_prot][indices[i] : indices[i + 1]])
+        
+            eff_n_frames[n_prot].append(1/np.sum(split_weights[n_prot][-1]**2))
+
+        my_tot[n_prot] = np.array(my_tot[n_prot])
+
+    #### part 2
+
+    s = []  # list with the entropy of the i-th protonation state from merging multiple samplings at different pH
+    s_CG = []  # list with the entropy of the clustered distribution (i-th protonation state)
+    s_CG_within = []  # list with the entropies for each cluster
+
+    for n_prot in data.ns_prot:
+
+        s.append(entropy_fun(data.p0s[n_prot]))
+        s_CG.append(entropy_fun(my_tot[n_prot]))
+
+        my_vec = [my_tot[n_prot][i]*entropy_fun(split_weights[n_prot][i]) for i in range(len(data.ph_vals))]
+        s_CG_within.append(np.array(my_vec))
+
+    #### part 3
+
+    avs = {}
+    stds = {}
+
+    for n_prot in data.ns_prot:
+        avs[n_prot] = []
+        stds[n_prot] = []
+
+        for i_ph in range(len(data.ph_vals)):
+            avs[n_prot].append(np.average(split_gs[n_prot][i_ph], axis=0, weights=split_weights[n_prot][i_ph]))
+            variance = np.average((split_gs[n_prot][i_ph] - avs[n_prot][-1])**2, axis=0, weights=split_weights[n_prot][i_ph])
+            stds[n_prot].append(np.sqrt(variance/eff_n_frames[n_prot][i_ph]))
+
+    zs = {}
+
+    for n_prot in data.ns_prot:
+        zs[n_prot] = []
+        
+        for i1_ph in range(len(data.ph_vals)):
+            for i2_ph in range(i1_ph + 1, len(data.ph_vals)):
+                zs[n_prot].append(_fun_zeta_val(avs[n_prot][i1_ph], avs[n_prot][i2_ph], stds[n_prot][i1_ph], stds[n_prot][i2_ph]))
+
+    #### part 4
+
+    my_bins = {}
+    my_hists = {}
+    my_dkls = {}
+    my_ress = {}
+
+    for i_obs, name_obs in enumerate(data.obs_names):
+        my_bins[name_obs] = []
+        my_hists[name_obs] = []
+        my_dkls[name_obs] = []
+        my_ress[name_obs] = []
+
+        for n_prot in range(len(data.ns_prot)):
+
+            hists = []
+
+            i_ph = 0
+            hist, bins = np.histogram(split_gs[n_prot][i_ph][:, i_obs], weights=split_weights[n_prot][i_ph], bins=50, density=True)
+            hists.append(hist)
+
+            for i_ph in range(1, len(data.ph_vals)):
+                hist = np.histogram(split_gs[n_prot][i_ph][:, i_obs], weights=split_weights[n_prot][i_ph], bins=bins, density=True)
+                hists.append(hist[0])
+
+            dkl = []
+            res = []
+
+            for i1_ph in range(len(data.ph_vals)):
+                for i2_ph in range(i1_ph + 1, len(data.ph_vals)):
+                    out = compute_dkl(hists[i1_ph], hists[i2_ph], True)
+                    dkl.append(out[0])
+                    res.append(out[1])
+
+            my_bins[name_obs].append(bins)
+            my_hists[name_obs].append(hists)
+            my_dkls[name_obs].append(dkl)
+            my_ress[name_obs].append(res)
+
+    ### part 5
+
+    pi0 = data.pops[data.ref_ph]
+    my_ph_vals = set(data.ph_vals) - set([data.ref_ph])
+
+    pops = {}
+    pops_dkl = {}
+
+    for i, ph in enumerate(my_ph_vals):
+        pops[ph] = compute_ph_weights(np.log(pi0), data.log_fugacities[i], data.ns_prot)
+        pops_dkl[ph] = compute_dkl(pops[ph], data.pops[ph])
+
+    return Ph_consistency(my_tot, eff_n_frames, s, s_CG, s_CG_within, avs, stds, zs, my_bins, my_hists,
+                          my_dkls, my_ress, pops, pops_dkl)
 
 def ph_gamma(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights):
     """
@@ -385,11 +629,6 @@ def ph_gamma_and_grad(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph
     gamma = ph_gamma(*args)
     grad = ph_gamma_gradient_fun(*args)
     return gamma, grad
-
-def compute_ph_weights(log_pi, log_fugacity, ns):
-    ph_weights = np.exp(log_pi + log_fugacity*ns)
-    ph_weights /= np.sum(ph_weights)
-    return ph_weights
 
 def ph_loss(log_pi_vec, lambdas, is_lambdas_fixed, alpha_pi, alphas, ph_data):
     """
