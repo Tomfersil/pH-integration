@@ -246,6 +246,13 @@ class Ph_consistency(coretools.Result):
         """ Dict with the values of Kullback-Leibler divergence between `pops` and corresponding values
         resulting from constant-pH MD simulations """
 
+
+
+class Lambdas:
+    def __init__(self, value, is_lambdas_fixed):
+        self.value = value
+        self.is_fixed = is_lambdas_fixed
+
 def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi', 'eRMSD'],
                  ph_vals = [3.50, 4.00, 4.50], ref_ph = 4.5, g_exp = None, sigma_exp = None):
     """
@@ -408,6 +415,7 @@ def _fun_zeta_val(mu1, mu2, sigma1, sigma2):
     return z
 
 def compute_ph_weights(log_pi, log_fugacity, ns):
+    """ Compute the weights of the protonation states at a given pH value, determined by `log_fugacity`. """
     ph_weights = np.exp(log_pi + log_fugacity*ns)
     ph_weights /= np.sum(ph_weights)
     return ph_weights
@@ -599,10 +607,16 @@ def ph_gamma(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights)
 
     gamma : float
         Value of the pH_Gamma function (analogous to the Gamma function for the pH application).
+
+    logZs : 1-D array-like
+
+    corrections : list
+
     """
     # if len(alphas) == 1:
     # then just a single hyperparameter alpha (so, optimize over a single hyperparameter)
     logZs = []
+    corrections = []
     
     n_ph = len(weights_ref)
 
@@ -614,23 +628,29 @@ def ph_gamma(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights)
         # print(np.einsum('ki,i,lk', fake_lambdas, ph_weights[:, j], gs[j]))
         correction_lambdas = 1/alphas[j]*np.einsum('ki,i,tk->t', table_lambdas, ph_weights[:, j], gs[j])
         log_Z_lambda = compute_new_weights(weights_ref[j], correction_lambdas)[1]
+
+        corrections.append(correction_lambdas)
         logZs.append(log_Z_lambda)
 
     logZs = np.array(logZs)
     
     gamma = 1/2*np.sum((lambdas*g_exp[:, 1])**2) + np.dot(lambdas, g_exp[:, 0]) + np.sum(logZs)
 
+    return gamma, logZs, corrections
+
+def _ph_gamma_only(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights):
+    gamma = ph_gamma(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights)[0]
     return gamma
 
-ph_gamma_gradient_fun = jax.grad(ph_gamma, argnums=0)
+ph_gamma_gradient_fun = jax.grad(_ph_gamma_only, argnums=0)
 
 def ph_gamma_and_grad(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights):
     args = (lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights)
-    gamma = ph_gamma(*args)
+    gamma = _ph_gamma_only(*args)
     grad = ph_gamma_gradient_fun(*args)
     return gamma, grad
 
-def ph_loss(log_pi_vec, ph_data, lambdas = None, is_lambdas_fixed = False, alpha_pi = 1., alphas = 1.):
+def ph_tilde_loss(log_pi_vec, ph_data, lambdas : Lambdas = None, alpha_pi = 1., alphas = 1.):
     """
     This is the loss function L̃(log(pi_j)) depending on `log_pi_vec`.
 
@@ -675,8 +695,9 @@ def ph_loss(log_pi_vec, ph_data, lambdas = None, is_lambdas_fixed = False, alpha
         Value of the `ph_loss` function $\mathcal L$, corresponding to $\mathcal L$ since we are in the minimum
         over $\vec\lambda$.
     """
+
+    if lambdas is None: lambdas = Lambdas(np.zeros(len(ph_data.g_exp)), False)
     
-    if lambdas is None: lambdas = np.zeros(len(ph_data.g_exp))
     if alphas == 1: alphas = np.ones(len(ph_data.ns_prot))
     log_pi_ref = np.log(ph_data.pops[ph_data.ref_ph])
 
@@ -688,7 +709,6 @@ def ph_loss(log_pi_vec, ph_data, lambdas = None, is_lambdas_fixed = False, alpha
 
     for log_fug in ph_data.log_fugacities:
         weights = compute_ph_weights(log_pi_vec, log_fug, ph_data.ns_prot)
-        weights /= np.sum(weights)
         ph_weights.append(weights)
     
     ph_weights = np.array(ph_weights)
@@ -697,27 +717,44 @@ def ph_loss(log_pi_vec, ph_data, lambdas = None, is_lambdas_fixed = False, alpha
     exp_values = np.vstack((ph_data.g_exp, ph_data.sigma_exp)).T
     args = (ph_data.legend_matrix, ph_data.gs, exp_values, ph_data.p0s, alphas, ph_weights)
 
-    if not is_lambdas_fixed:
-        mini = minimize(ph_gamma_and_grad, lambdas, args=args, method='BFGS', jac=True)  # , options={'gtol': gtol})
+    if not lambdas.is_fixed:
+        mini = minimize(ph_gamma_and_grad, lambdas.value, args=args, method='BFGS', jac=True)  # , options={'gtol': gtol})
         gamma = mini.fun
+        lambdas.value = mini.x  # update value of lambdas
     else:
-        gamma = ph_gamma(lambdas, *args)
+        gamma = _ph_gamma_only(lambdas.value, *args)
     
     # 3. add dkl value to compute the total loss value
     pi_vec = np.exp(log_pi_vec - np.max(log_pi_vec))
     pi_vec /= np.sum(pi_vec)
     
-    dkl = np.sum(np.exp(log_pi_vec)*(log_pi_vec - log_pi_ref))
+    dkl = np.sum(pi_vec*(np.log(pi_vec) - log_pi_ref))
+    
+    # wrong because log_pi must be normalized!!
+    ## dkl = np.sum(np.exp(log_pi_vec)*(log_pi_vec - log_pi_ref))
+    
     loss = - gamma + alpha_pi*dkl
+
+    print(gamma, dkl)
 
     return loss
 
-ph_loss_gradient_fun = jax.grad(ph_loss, argnums=0)
+ph_tilde_loss_gradient_fun = jax.grad(ph_tilde_loss, argnums=0)
 
-def ph_loss_and_grad(log_pi_vec, lambdas, is_lambdas_fixed, alpha_pi, alphas, ph_data):
+def ph_tilde_loss_and_grad(log_pi_vec, data, lambdas):
 
-    args = (log_pi_vec, lambdas, is_lambdas_fixed, alpha_pi, alphas, ph_data)
-    loss = ph_loss(*args)
-    grad = ph_loss_gradient_fun(*args)
+    assert not lambdas.is_fixed, 'error: lambdas is fixed'
+    loss = ph_tilde_loss(log_pi_vec, data, lambdas)
+
+    lambdas.is_fixed = True
+    # in this way, the gradient is computed without looking at the derivative of lambdas w.r.t. log_pi_vec,
+    # which is zero, since we are at the optimal lambdas for that log_pi_vec value
+    
+    grad = ph_tilde_loss_gradient_fun(log_pi_vec, data, lambdas)
+
+    lambdas.is_fixed = False
+
+    print(loss, grad)
+
     return loss, grad
 
