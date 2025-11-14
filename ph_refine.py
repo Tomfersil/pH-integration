@@ -13,6 +13,7 @@ import pandas
 import jax
 import jax.numpy as np  # consistently with MDRefine, np for jax.numpy
 from scipy.optimize import minimize
+from typing import Union, Optional, List
 
 from bussilab import coretools
 from MDRefine import compute_new_weights
@@ -246,12 +247,36 @@ class Ph_consistency(coretools.Result):
         """ Dict with the values of Kullback-Leibler divergence between `pops` and corresponding values
         resulting from constant-pH MD simulations """
 
-
-
 class Lambdas:
     def __init__(self, value, is_lambdas_fixed):
         self.value = value
         self.is_fixed = is_lambdas_fixed
+
+class Ph_result(coretools.Result):
+    def __init__(self, gamma : float, check_gamma : float, log_ps, avs, avs_ph, rel_diff, chi2, dkl_p, dkl_pi, loss):
+        """ Class with the results of `ph_loss`. """
+        
+        super().__init__()
+
+        self.gamma = gamma
+
+        self.check_gamma = check_gamma
+
+        self.log_ps = log_ps
+
+        self.avs = avs
+
+        self.avs_ph = avs_ph
+
+        self.rel_diff = rel_diff
+
+        self.chi2 = chi2
+
+        self.dkl_p = dkl_p
+        
+        self.dkl_pi = dkl_pi
+
+        self.loss = loss
 
 def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi', 'eRMSD'],
                  ph_vals = [3.50, 4.00, 4.50], ref_ph = 4.5, g_exp = None, sigma_exp = None):
@@ -567,11 +592,106 @@ def compute_ph_consistency(data):
     return Ph_consistency(my_tot, eff_n_frames, s, s_CG, s_CG_within, avs, stds, zs, my_bins, my_hists,
                           my_dkls, my_ress, pops, pops_dkl)
 
+def ph_loss(lambdas : np.ndarray, pis : np.ndarray, data : Ph_data, alphas : Union[float, List[float]] = 1.,
+            alpha_pi : float = 1.):
+    """
+    Function to compute the loss function for pH refinement, defined as in documentation (1/2 chi2 + reg. terms).
+
+    Parameters
+    ----------
+    
+    lambdas : 1-D array-like
+        Numpy 1-dimensional array, each element corresponds to the lambda value for an experimental observable
+        at a certain pH value; this correspondence is given by `Manage_indices.flatten` (from table of values
+        to 1d array) and `Manage_indices.flat_to_matrix` (from 1d array to table of values).
+    
+    pis : 1-D array-like
+        Numpy 1-dimensional array for the (normalized) populations of each protonation state at reference pH `data.ref_ph`.
+
+    data : Ph_data
+        Instance of the `Ph_data` class with all the quantities (from experiments and MD simulations) required to
+        evaluate and minimize the loss function `ph_loss`.
+
+    alphas : float or list of floats
+        Values of the hyperparameters for each canonical ensemble corresponding to a protonation state; by default,
+        `alphas = 1.`, that means `alphas = np.ones(len(data.ns_prot))`.
+
+    alpha_pi : float
+        Value of the hyperparameter for the `pis` probability distribution (populations of each protonation state at
+        reference pH).
+
+    Return
+    ----------
+
+    result : Ph_result
+        Instance of the `Ph_result` class with all the quantities computed to evaluate the loss function.
+    """
+
+    assert (np.all(np.array(alphas) > 0)), 'error on alphas, it must be positive!'
+    if isinstance(alphas, (int, float)):
+        alphas = alphas*np.ones(len(data.ns_prot))
+    else:
+        assert len(alphas) == len(data.ns_prot), 'error on alphas, it must have the same length as data.ns_prot'
+
+    exp_values = np.vstack((data.g_exp, data.sigma_exp)).T
+
+    ph_weights = []
+
+    for i in range(len(data.ph_vals)):
+        w = compute_ph_weights(np.log(pis), data.log_fugacities[i], data.ns_prot)
+        ph_weights.append(w)
+
+    ph_weights = np.array(ph_weights)
+
+    gamma, logZs, corrections = ph_gamma(lambdas, data.legend_matrix, data.gs, exp_values, data.p0s, alphas, ph_weights)
+
+    log_ps = []
+    avs = []
+    avs_correction = []
+
+    for j in range(len(data.ns_prot)):
+
+        log_ps.append(np.log(data.p0s[j]) - logZs[j] - corrections[j])
+
+        p = np.exp(log_ps[j])
+        avs.append(np.dot(p, data.gs[j]))
+        avs_correction.append(np.dot(p, corrections[j]))
+
+    avs = np.vstack(avs)  # (N. prot. states x N. obs) matrix
+
+    avs_ph = np.dot(ph_weights, avs).T
+    # avs_ph is a full matrix (N. obs x N. pH), but it may happen that only some of its cells have a
+    # corresponding experimental value
+
+    exp_vals = Manage_indices.flat_to_matrix(data.g_exp, data.legend_matrix)
+    exp_errs = Manage_indices.flat_to_matrix(data.sigma_exp, data.legend_matrix)
+
+    rel_diff = np.where(np.isnan(exp_vals) | np.isnan (exp_errs), np.nan, (avs_ph - exp_vals)/exp_errs)
+
+    chi2 = np.sum(rel_diff**2)
+
+    loss = 1/2*chi2
+
+    dkl_p = []
+
+    for j in range(len(data.ns_prot)):
+        dkl_p.append(-logZs[j] - avs_correction[j])
+
+    dkl_p = np.array(dkl_p)
+
+    dkl_pi = compute_dkl(pis, data.pops[data.ref_ph])
+
+    loss += np.dot(alphas, dkl_p) + alpha_pi*dkl_pi
+
+    check_gamma = 1/2*chi2 + np.dot(alphas, dkl_p) + gamma
+
+    return Ph_result(gamma, check_gamma, log_ps, avs, avs_ph, rel_diff, chi2, dkl_p, dkl_pi, loss)
+
 def ph_gamma(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights):
     """
     Compute the Gamma function for the pH refinement.
 
-    Parameters:
+    Parameters
     ----------
     
     lambdas : 1-D array-like
@@ -609,9 +729,10 @@ def ph_gamma(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph_weights)
         Value of the pH_Gamma function (analogous to the Gamma function for the pH application).
 
     logZs : 1-D array-like
+        Numpy 1-dimensional array for the logarithms of the partition function at each protonation state.
 
     corrections : list
-
+        List of 1-dimensional arrays with the corrections to the reference ensemble at each protonation state.
     """
     # if len(alphas) == 1:
     # then just a single hyperparameter alpha (so, optimize over a single hyperparameter)
@@ -650,7 +771,8 @@ def ph_gamma_and_grad(lambdas, legend_matrix, gs, g_exp, weights_ref, alphas, ph
     grad = ph_gamma_gradient_fun(*args)
     return gamma, grad
 
-def ph_tilde_loss(log_pi_vec, ph_data, lambdas : Lambdas = None, alpha_pi = 1., alphas = 1.):
+def ph_tilde_loss(log_pi_vec : np.ndarray, ph_data : Ph_data, lambdas : Optional[Lambdas] = None, alpha_pi : float = 1.,
+                  alphas : Union[float, List[float]] = 1.):
     """
     This is the loss function L̃(log(pi_j)) depending on `log_pi_vec`.
 
@@ -735,8 +857,6 @@ def ph_tilde_loss(log_pi_vec, ph_data, lambdas : Lambdas = None, alpha_pi = 1., 
     
     loss = - gamma + alpha_pi*dkl
 
-    print(gamma, dkl)
-
     return loss
 
 ph_tilde_loss_gradient_fun = jax.grad(ph_tilde_loss, argnums=0)
@@ -754,7 +874,7 @@ def ph_tilde_loss_and_grad(log_pi_vec, data, lambdas):
 
     lambdas.is_fixed = False
 
-    print(loss, grad)
+    print('loss, grad: ', loss, grad)
 
     return loss, grad
 
