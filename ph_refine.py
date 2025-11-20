@@ -20,11 +20,13 @@ from MDRefine import compute_new_weights
 
 class Ph_data(coretools.Result):
     def __init__(self, g_exp : np.ndarray, sigma_exp : np.ndarray, legend_matrix : np.ndarray,
-                 gs : dict, weights : dict, legend_weights : dict, ref_ph : float, pops : dict,
-                 log_fugacities : np.ndarray, ns_prot : np.ndarray, obs_names : list, ph_vals : list):
+                 gs : dict, weights : dict, legend_weights : dict, ref_pH : float, pops : np.ndarray,
+                 log_fugacities : np.ndarray, ns_prot : np.ndarray, obs_names : list, pH_vals : list):
         """ Class with the fixed quantities that are required to evaluate the loss function `ph_loss`. """
         
         super().__init__()
+
+        assert len(g_exp) == len(sigma_exp), 'mismatch between experimental values and uncertainties'
 
         self.g_exp = g_exp
         """ 1-D array-like with experimental values """
@@ -41,6 +43,10 @@ class Ph_data(coretools.Result):
         the 2-D array (M x N) of observables computed from MD simulations, with M the total n. of frames
         at given protonation state from all the simulations at constant pH and N the n. of observables """
 
+        for k in weights.keys():
+            if np.sum(weights[k]) != 1.0:
+                weights[k] /= np.sum(weights[k])
+        
         self.p0s = weights
         """ Dict of 1-D array-like with the reference normalized weights for each protonation state,
         given by the collection of all the sampled configurations at that protonation state from the
@@ -50,13 +56,21 @@ class Ph_data(coretools.Result):
         """ Dict with lists of indices to map back the NumPy arrays with weights and observables from a unique
         array at fixed protonation state to the contributions from multiple constant-pH simulations """
 
-        self.ref_ph = ref_ph
+        self.ref_pH = ref_pH
         """ Reference value for the pH among the possible ones """
 
+        if np.sum(pops) != 1.0:
+            pops /= np.sum(pops)
+        
         self.pops = pops
-        """ Dict with 1-D array-like with the original (namely, initial hypothesis) probabilities to be at
-        the j-th protonation state for the each pH value. This information is lost when we collect multiple
-        simulations at constant pH values at fixed protonation state. Notice that `pi0` is `pops[ref_ph]`. """
+        """ 1-D array-like with the populations of the protonation states at reference pH value
+            WARNING: this is conflict with `compute_ph_consistency`, which instead requires the
+            populations at each pH value, fix this! """
+        
+        print('WARNING: `data.pops` is conflict with `compute_ph_consistency`, which instead requires the populations at each pH value, fix this!')
+        # """ Dict with 1-D array-like with the original (namely, initial hypothesis) probabilities to be at
+        # the j-th protonation state for the each pH value. This information is lost when we collect multiple
+        # simulations at constant pH values at fixed protonation state. Notice that `pi0` is `pops[ref_pH]`. """
 
         self.log_fugacities = log_fugacities
         """ 1-D array-like with the logarithm of the fugacity factors, namely the values of
@@ -68,8 +82,8 @@ class Ph_data(coretools.Result):
         self.obs_names = obs_names
         """ List with the names of the observables (length given by the total n. of observables) """
 
-        self.ph_vals = ph_vals
-        """ List with the pH values (redundant since it can be got from `log_fugacities` and `ref_ph`) """
+        self.pH_vals = pH_vals
+        """ List with the pH values (redundant since it can be got from `log_fugacities` and `ref_pH`) """
 
 class Manage_indices():
     """
@@ -240,7 +254,7 @@ class Ph_consistency(coretools.Result):
     
         self.pops = pops
         """ Dict with the populations of multiple protonation states at each pH value beyond the reference one
-        `data.ref_ph`, as computed by `compute_ph_weights` following the grand-canonical statistics (correspondence
+        `data.ref_pH`, as computed by `compute_ph_weights` following the grand-canonical statistics (correspondence
         between pH differences and fugacities) """
 
         self.pops_dkl = pops_dkl
@@ -279,7 +293,7 @@ class Ph_result(coretools.Result):
         self.loss = loss
 
 def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi', 'eRMSD'],
-                 ph_vals = [3.50, 4.00, 4.50], ref_ph = 4.5, g_exp = None, sigma_exp = None):
+                 pH_vals = [3.50, 4.00, 4.50], ref_pH = 4.5, g_exp = None, sigma_exp = None):
     """
     Load pH data from multiple simulations at constant pH.
 
@@ -297,11 +311,11 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
         List of strings with the names of the observables, corresponding to the selected columns of the txt files
         with observables and weights.
     
-    ph_vals : list
+    pH_vals : list
         List of float values corresponding to the pH values (they should also match with the values required
         for the names of the data files).
     
-    ref_ph : float
+    ref_pH : float
         Float for the reference value of pH, used for reference populations in protonation states and fugacities
         (`pi0` and `log_fugacities` attributes of `Ph_data`).
         Suggestion: take the pH value to be the closest one to the pKa, namely, take the one such that the
@@ -311,7 +325,7 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
     g_exp, sigma_exp : numpy.ndarray
         Numpy 2-dimensional arrays with measured values and corresponding uncertainties; they are structured
         as a table with rows corresponding to the observables and columns corresponding to the pH values, as
-        listed in `obs_names` and `ph_vals`.
+        listed in `obs_names` and `pH_vals`.
         If None, it will return the average values and standard deviations on the mean.
     
     Return
@@ -321,7 +335,7 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
         Instance of the `Ph_data` class.
     """
 
-    assert ref_ph in ph_vals, 'ref_ph not valid'
+    assert ref_pH in pH_vals, 'ref_pH not valid'
 
     # 1. read files and get ns, gs, weights, and ns_prot
 
@@ -331,7 +345,7 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
     gs = {}
     weights = {}
 
-    for ph in ph_vals:
+    for ph in pH_vals:
         # ns[ph] = np.array(pandas.read_csv(path + 'A5mer_pH0%.2f.occ' % ph, header=None).iloc[:, 0])
         ns[ph] = numpy.loadtxt(path + mol_name + '_pH0%.2f.occ' % ph)
 
@@ -342,7 +356,7 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
         gs[ph] = df[obs_names]
         weights[ph] = np.array(df['weight'])
 
-    ns_prot = numpy.sort(numpy.unique([ns[ph] for ph in ph_vals]))
+    ns_prot = numpy.sort(numpy.unique([ns[ph] for ph in pH_vals]))
     ns_prot = ns_prot.astype(int)
 
     # 2. put together values from different pH at the same protonation state
@@ -357,7 +371,7 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
         my_ws[n_prot] = []
         my_legend[n_prot] = [0]
 
-        for ph in ph_vals:
+        for ph in pH_vals:
             # my_gs[n_prot].append(np.array(gs[ph].iloc[ns[ph] == n_prot].loc[0][obs_names]))
             # my_gs[n_prot].append(gs[ph][ns[ph].to_numpy() == n_prot])
             my_gs[n_prot].append(np.array(gs[ph])[ns[ph] == n_prot])
@@ -373,7 +387,7 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
 
     pops = {}
 
-    for ph in ph_vals:
+    for ph in pH_vals:
         pops[ph] = []
 
         for n_prot in ns_prot:
@@ -381,7 +395,7 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
 
         pops[ph] = np.array(pops[ph])/np.sum(weights[ph])
 
-    delta_ph = np.array(ph_vals) - ref_ph
+    delta_ph = np.array(pH_vals) - ref_pH
     log_fugacities = - delta_ph*np.log(10)
     
     # 4. from tables of experimental values and uncertainties, make a 1d array
@@ -389,11 +403,11 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
 
     if g_exp is None:
 
-        table_av = numpy.zeros((len(obs_names), len(ph_vals)))
+        table_av = numpy.zeros((len(obs_names), len(pH_vals)))
         table_std = + table_av
 
         for i, obs_name in enumerate(obs_names):
-            for j, ph in enumerate(ph_vals):
+            for j, ph in enumerate(pH_vals):
                 # first index observable, second index ph
                 if obs_name in gs[ph].columns:
                     table_av[i, j] = np.mean(np.array(gs[ph][obs_name]))
@@ -406,8 +420,8 @@ def load_ph_data(path = 'Simulation-data', mol_name = 'A5mer', obs_names = ['chi
     g_exp = Manage_indices.flatten(g_exp)
     sigma_exp = Manage_indices.flatten(sigma_exp)
 
-    return Ph_data(g_exp, sigma_exp, legend_matrix, my_gs, my_ws, my_legend, ref_ph, pops, log_fugacities,
-                   ns_prot, obs_names, ph_vals)
+    return Ph_data(g_exp, sigma_exp, legend_matrix, my_gs, my_ws, my_legend, ref_pH, pops, log_fugacities,
+                   ns_prot, obs_names, pH_vals)
 
 def entropy_fun(p):
     p = p[p != 0]
@@ -439,11 +453,35 @@ def _fun_zeta_val(mu1, mu2, sigma1, sigma2):
     z = (mu1 - mu2)/np.sqrt(sigma1**2 + sigma2**2)
     return z
 
-def compute_ph_weights(log_pi, log_fugacity, ns):
+def compute_ph_weights(log_weights, log_fugacity, ns_prot):
     """ Compute the weights of the protonation states at a given pH value, determined by `log_fugacity`. """
-    ph_weights = np.exp(log_pi + log_fugacity*ns)
-    ph_weights /= np.sum(ph_weights)
-    return ph_weights
+    
+    log_weights = +log_weights # needed to avoid external modifications of the input (reference-type)
+    log_weights += log_fugacity*ns_prot
+    log_weights -= np.max(log_weights)
+
+    weights = np.exp(log_weights)
+    weights /= np.sum(weights)
+
+    return weights
+
+def compute_weights_pH(logW, ns_prot = None, pH = None):
+    """
+    This function computes normalized weights of each frame at arbitrary pH,
+    starting from 
+    """
+
+    logW = +logW  # needed to avoid external modifications of the input (reference-type)
+
+    if ns_prot is not None:
+        logW -= np.log(10)*pH*ns_prot
+        assert pH is not None, 'error: pH is None'
+
+    logW -= np.max(logW)
+    weights = np.exp(logW)
+    weights /= np.sum(weights)
+
+    return weights
 
 def compute_ph_consistency(data):
     """
@@ -512,7 +550,7 @@ def compute_ph_consistency(data):
         s.append(entropy_fun(data.p0s[n_prot]))
         s_CG.append(entropy_fun(my_tot[n_prot]))
 
-        my_vec = [my_tot[n_prot][i]*entropy_fun(split_weights[n_prot][i]) for i in range(len(data.ph_vals))]
+        my_vec = [my_tot[n_prot][i]*entropy_fun(split_weights[n_prot][i]) for i in range(len(data.pH_vals))]
         s_CG_within.append(np.array(my_vec))
 
     #### part 3
@@ -524,7 +562,7 @@ def compute_ph_consistency(data):
         avs[n_prot] = []
         stds[n_prot] = []
 
-        for i_ph in range(len(data.ph_vals)):
+        for i_ph in range(len(data.pH_vals)):
             avs[n_prot].append(np.average(split_gs[n_prot][i_ph], axis=0, weights=split_weights[n_prot][i_ph]))
             variance = np.average((split_gs[n_prot][i_ph] - avs[n_prot][-1])**2, axis=0, weights=split_weights[n_prot][i_ph])
             stds[n_prot].append(np.sqrt(variance/eff_n_frames[n_prot][i_ph]))
@@ -534,8 +572,8 @@ def compute_ph_consistency(data):
     for n_prot in data.ns_prot:
         zs[n_prot] = []
         
-        for i1_ph in range(len(data.ph_vals)):
-            for i2_ph in range(i1_ph + 1, len(data.ph_vals)):
+        for i1_ph in range(len(data.pH_vals)):
+            for i2_ph in range(i1_ph + 1, len(data.pH_vals)):
                 zs[n_prot].append(_fun_zeta_val(avs[n_prot][i1_ph], avs[n_prot][i2_ph], stds[n_prot][i1_ph], stds[n_prot][i2_ph]))
 
     #### part 4
@@ -559,15 +597,15 @@ def compute_ph_consistency(data):
             hist, bins = np.histogram(split_gs[n_prot][i_ph][:, i_obs], weights=split_weights[n_prot][i_ph], bins=50, density=True)
             hists.append(hist)
 
-            for i_ph in range(1, len(data.ph_vals)):
+            for i_ph in range(1, len(data.pH_vals)):
                 hist = np.histogram(split_gs[n_prot][i_ph][:, i_obs], weights=split_weights[n_prot][i_ph], bins=bins, density=True)
                 hists.append(hist[0])
 
             dkl = []
             res = []
 
-            for i1_ph in range(len(data.ph_vals)):
-                for i2_ph in range(i1_ph + 1, len(data.ph_vals)):
+            for i1_ph in range(len(data.pH_vals)):
+                for i2_ph in range(i1_ph + 1, len(data.pH_vals)):
                     out = compute_dkl(hists[i1_ph], hists[i2_ph], True)
                     dkl.append(out[0])
                     res.append(out[1])
@@ -579,13 +617,13 @@ def compute_ph_consistency(data):
 
     ### part 5
 
-    pi0 = data.pops[data.ref_ph]
-    my_ph_vals = set(data.ph_vals) - set([data.ref_ph])
+    pi0 = data.pops  # [data.ref_pH]
+    my_pH_vals = set(data.pH_vals) - set([data.ref_pH])
 
     pops = {}
     pops_dkl = {}
 
-    for i, ph in enumerate(my_ph_vals):
+    for i, ph in enumerate(my_pH_vals):
         pops[ph] = compute_ph_weights(np.log(pi0), data.log_fugacities[i], data.ns_prot)
         pops_dkl[ph] = compute_dkl(pops[ph], data.pops[ph])
 
@@ -606,7 +644,7 @@ def ph_loss(lambdas : np.ndarray, pis : np.ndarray, data : Ph_data, alphas : Uni
         to 1d array) and `Manage_indices.flat_to_matrix` (from 1d array to table of values).
     
     pis : 1-D array-like
-        Numpy 1-dimensional array for the (normalized) populations of each protonation state at reference pH `data.ref_ph`.
+        Numpy 1-dimensional array for the (normalized) populations of each protonation state at reference pH `data.ref_pH`.
 
     data : Ph_data
         Instance of the `Ph_data` class with all the quantities (from experiments and MD simulations) required to
@@ -637,7 +675,7 @@ def ph_loss(lambdas : np.ndarray, pis : np.ndarray, data : Ph_data, alphas : Uni
 
     ph_weights = []
 
-    for i in range(len(data.ph_vals)):
+    for i in range(len(data.pH_vals)):
         w = compute_ph_weights(np.log(pis), data.log_fugacities[i], data.ns_prot)
         ph_weights.append(w)
 
@@ -679,7 +717,7 @@ def ph_loss(lambdas : np.ndarray, pis : np.ndarray, data : Ph_data, alphas : Uni
 
     dkl_p = np.array(dkl_p)
 
-    dkl_pi = compute_dkl(pis, data.pops[data.ref_ph])
+    dkl_pi = compute_dkl(pis, data.pops)  # [data.ref_pH])
 
     loss += np.dot(alphas, dkl_p) + alpha_pi*dkl_pi
 
@@ -821,7 +859,7 @@ def ph_tilde_loss(log_pi_vec : np.ndarray, ph_data : Ph_data, lambdas : Optional
     if lambdas is None: lambdas = Lambdas(np.zeros(len(ph_data.g_exp)), False)
     
     if alphas == 1: alphas = np.ones(len(ph_data.ns_prot))
-    log_pi_ref = np.log(ph_data.pops[ph_data.ref_ph])
+    log_pi_ref = np.log(ph_data.pops)  # [ph_data.ref_pH])
 
     log_pi_vec -= np.mean(log_pi_vec)  # enforce zero-mean gauge
     
