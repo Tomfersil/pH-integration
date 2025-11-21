@@ -691,7 +691,7 @@ def pH_loss(lambdas : np.ndarray, pis : np.ndarray, data : PHData, alphas : Unio
 
         log_ps.append(np.log(data.p0s[j]) - logZs[j] - corrections[j])
 
-        p = np.exp(log_ps[j])
+        p = np.exp(log_ps[j])  # normalized by definition of log_ps
         avs.append(np.dot(p, data.gs[j]))
         avs_correction.append(np.dot(p, corrections[j]))
 
