@@ -66,21 +66,21 @@ Simulation-data/
       ├── COLVAR_REWEIGHT_<pH>_weighted            # COLVAR with metadynamics weights included
       │                                            # (used to generate TOTVAR_REWEIGHT_<pH>)
       │
-      ├── HILLS_pH<pH>.gz                           # Metadynamics HILLS files
-      |                                              # (if metadynamics-based constant pH MD simulations)
+      ├── HILLS_pH<pH>.gz                          # Metadynamics HILLS files
+      |                                            # (if metadynamics-based constant pH MD simulations)
       │
-      ├── TOTVAR_REWEIGHT_<pH>                      # Concatenation of weighted COLVAR files,
-      |                                             # reweighted with the pH factor;
-      |                                             # used as input of `WHAM.ipynb` notebook
+      ├── TOTVAR_REWEIGHT_<pH>                     # Concatenation of weighted COLVAR files,
+      |                                            # reweighted with the pH factor;
+      |                                            # used as input of `WHAM.ipynb` notebook
       │
-      ├── WHAM_df.txt                               # WHAM detailed output:
-      │                                             # columns: weight, n_prot, observables  
-      |                                             # (sampling of canonical ensemble at each protonation state)
+      ├── WHAM_df.txt                              # WHAM detailed output:
+      │                                            # columns: weight, n_prot, observables  
+      |                                            # (sampling of canonical ensemble at each protonation state)
       │
-      └── WHAM_pops_<refpH>.txt                     # WHAM-estimated protonation-state populations
-      |                                             # at reference pH <refpH>
+      └── WHAM_pops_<refpH>.txt                    # WHAM-estimated protonation-state populations
+      |                                            # at reference pH <refpH>
   │
-  └── ...                                           # Additional molecular systems
+  └── ...                                          # Additional molecular systems
 
 ```
 
