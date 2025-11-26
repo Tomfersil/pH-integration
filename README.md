@@ -22,9 +22,9 @@ pH-integration/
 │
 ├── ph_refine.ipynb                      # Development notebook for pH_refine.py
 │
-├── ph_optimization_draft.ipynb          # Early notebook for optimization-strategy exploration
+├── ph_optimization_draft.ipynb          # Early notebook for optimization (used to develop pH_refine.py)
 │
-├── ph_optimization.ipynb                # Final optimization workflow and validation
+├── ph_optimization.ipynb                # Final optimization workflow
 │
 ├── test.ipynb                           # Comparison of multiple constant-pH MD simulations
 │
