@@ -1,9 +1,9 @@
 # pH-integration
 This repository stores and shows scripts to integrate experimental data (such as NMR) with data from constant pH (CpH) MD simulations.
 
-The project includes the `pH_refine.py` file (with all the functions developed for the integration of CpH MD simulations with experimental data) and some Jupyter notebooks, used either in the implementation process (`ph_refine.ipynb`, `ph_optimization_draft.ipynb`) and as tutorials to describe the functionalities of `pH_refine.py` (`ph_optimization.ipynb`).
+The project includes the [`pH_refine.py`](pH_refine.py) file (with all the functions developed for the integration of CpH MD simulations with experimental data) and the Jupyter notebooks, used either in the implementation process ([`ph_refine.ipynb`](ph_refine.ipynb), [`ph_optimization_draft.py`](ph_optimization_draft.py)) and as tutorials to describe the functionalities of [`pH_refine.py`](pH_refine.py) ([`ph_optimization.ipynb`](ph_optimization.ipynb)).
 
-The main concepts and the loss function here implemented are described in the documentation `theory.pdf`.
+The main concepts and the loss function here implemented are described in the documentation [`theory.pdf`](theory.pdf).
 
 ---
 
