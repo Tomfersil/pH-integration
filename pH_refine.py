@@ -925,3 +925,27 @@ def pH_tilde_loss_and_grad(log_pi_vec, ph_data, lambdas, alpha_pi : float = 1.,
 
     return loss, grad
 
+def pH_minimizer(data, alpha_pi = 1., alphas = 1.):
+    
+    lambdas = Lambdas(np.zeros(len(data.g_exp)), False)
+    args = (data, lambdas, alpha_pi, alphas)
+
+    mini = minimize(pH_tilde_loss_and_grad, log_pi_vec, args=args, method='BFGS', jac=True)
+
+    pi_new = np.exp(mini.x)
+    pi_new /= np.sum(pi_new)
+
+    out = pH_loss(lambdas.value, pi_new, data, alphas, alpha_pi)
+    
+    out.lambdas = lambdas.value
+    out.pi_new = pi_new
+    out.mini = mini
+    out.diff = np.abs(out.loss - mini.fun)
+
+    if out.diff < 1e-3: print('yes, they agree!')
+    else: print('significant mismatch, possible errors!')
+
+    pKa = data.ref_pH - np.log10(pi_new[0]/pi_new[1])
+    out.optimal_pKa = pKa
+
+    return out
