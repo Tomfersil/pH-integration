@@ -428,7 +428,7 @@ def entropy_fun(p):
     entropy = np.sum(p*np.log(p))
     return entropy
 
-def compute_dkl(p, p0, if_zero = False):
+def compute_dkl(p, p0, if_zero=False):
     """
     Compute the Kullback-Leibler divergence between `p` and `p0`.
     If `if_zero` is True, then remove from `p` and `p0` the points with `p0 = 0` so that no `inf` value
@@ -465,7 +465,7 @@ def compute_pH_weights(log_weights, log_fugacity, ns_prot):
 
     return weights
 
-def compute_weights_pH(logW, ns_prot = None, pH = None):
+def compute_weights_pH(logW, ns_prot=None, pH=None):
     """
     This function computes normalized weights of each frame at arbitrary pH,
     starting from 
@@ -925,12 +925,14 @@ def pH_tilde_loss_and_grad(log_pi_vec, ph_data, lambdas, alpha_pi : float = 1.,
 
     return loss, grad
 
-def pH_minimizer(data, alpha_pi = 1., alphas = 1.):
+def pH_minimizer(data, alpha_pi=1., alphas=1., starting_log_pi_vec=None):
     
     lambdas = Lambdas(np.zeros(len(data.g_exp)), False)
     args = (data, lambdas, alpha_pi, alphas)
 
-    mini = minimize(pH_tilde_loss_and_grad, log_pi_vec, args=args, method='BFGS', jac=True)
+    if starting_log_pi_vec is None: starting_log_pi_vec = np.log(data.ref_pops)
+    
+    mini = minimize(pH_tilde_loss_and_grad, starting_log_pi_vec, args=args, method='BFGS', jac=True)
 
     pi_new = np.exp(mini.x)
     pi_new /= np.sum(pi_new)
